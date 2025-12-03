@@ -1,16 +1,108 @@
 ---
+import Layout from '../layouts/Layout.astro';
+import sql from '../lib/db.js';
 
+// Buscas no Banco de Dados (Server Side)
+const [gastosMes] = await sql`
+    SELECT COALESCE(SUM(valor_total), 0) as total 
+    FROM compras 
+    WHERE date_trunc('month', data_compra) = date_trunc('month', CURRENT_DATE)
+`;
+
+const [pendentes] = await sql`
+    SELECT COUNT(*) as qtd, COALESCE(SUM(valor_parcela), 0) as valor
+    FROM contas_pagar 
+    WHERE status = 'pendente' AND data_vencimento <= CURRENT_DATE + 7
+`;
+
+const estoqueBaixo = await sql`
+    SELECT nome, estoque_atual, estoque_minimo 
+    FROM produtos 
+    WHERE estoque_atual <= estoque_minimo 
+    LIMIT 5
+`;
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<Layout title="Dashboard">
+    <h1 class="text-3xl font-bold mb-8 text-slate-800">Visão Geral</h1>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+            <h3 class="text-sm font-semibold text-slate-500 uppercase">Gasto no Mês</h3>
+            <p class="text-3xl font-bold text-emerald-600 mt-2">
+                R$ {Number(gastosMes.total).toLocaleString('pt-BR', {minimumFractionDigits: 2})}
+            </p>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+            <h3 class="text-sm font-semibold text-slate-500 uppercase">A Vencer (7 dias)</h3>
+            <p class="text-3xl font-bold text-orange-600 mt-2">
+                R$ {Number(pendentes.valor).toLocaleString('pt-BR', {minimumFractionDigits: 2})}
+            </p>
+            <span class="text-xs text-slate-400">{pendentes.qtd} contas pendentes</span>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+            <h3 class="text-sm font-semibold text-slate-500 uppercase">Alerta de Estoque</h3>
+            <p class="text-3xl font-bold text-red-600 mt-2">{estoqueBaixo.length} Itens</p>
+            <span class="text-xs text-slate-400">Abaixo do mínimo</span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Tabela Estoque Baixo -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-4 border-b border-slate-100 bg-slate-50">
+                <h2 class="font-bold text-slate-700">⚠️ Estoque Crítico</h2>
+            </div>
+            <table class="w-full text-sm text-left">
+                <thead class="bg-slate-50 text-slate-500">
+                    <tr>
+                        <th class="p-3">Produto</th>
+                        <th class="p-3">Atual</th>
+                        <th class="p-3">Mínimo</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {estoqueBaixo.map((item) => (
+                        <tr class="hover:bg-slate-50">
+                            <td class="p-3 font-medium">{item.nome}</td>
+                            <td class="p-3 text-red-600 font-bold">{item.estoque_atual}</td>
+                            <td class="p-3">{item.estoque_minimo}</td>
+                        </tr>
+                    ))}
+                    {estoqueBaixo.length === 0 && (
+                        <tr><td colspan="3" class="p-4 text-center text-slate-400">Tudo ok com o estoque!</td></tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Placeholder do Gráfico -->
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+            <h2 class="font-bold text-slate-700 mb-4">Evolução de Gastos</h2>
+            <div class="h-64 flex items-center justify-center bg-slate-50 rounded border border-dashed border-slate-300">
+                <canvas id="chartGastos"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Script simples para renderizar gráfico (dados mockados para exemplo)
+        const ctx = document.getElementById('chartGastos');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'],
+                datasets: [{
+                    label: 'Gastos (R$)',
+                    data: [12000, 19000, 3000, 5000, 2000, 30000],
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 4
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    </script>
+</Layout>

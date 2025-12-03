@@ -1,0 +1,217 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import sql from '../../lib/db.js';
+
+// 1. Buscar dados para os Selects
+const fornecedores = await sql`SELECT id, nome FROM fornecedores ORDER BY nome`;
+const produtos = await sql`SELECT id, nome, unidade_medida FROM produtos ORDER BY nome`;
+
+// 2. Processamento do Formulário (POST)
+let message = '';
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  try {
+    const data = await Astro.request.formData();
+    
+    // Extrair dados básicos
+    const fornecedor_id = data.get('fornecedor_id');
+    const data_compra = data.get('data_compra');
+    const forma_pagamento = data.get('forma_pagamento'); // vista ou parcelado
+    const qtd_parcelas = parseInt(data.get('qtd_parcelas') || '1');
+    
+    // Extrair Arrays de Produtos (Logica manual pois FormData trata arrays diferente)
+    const produto_ids = data.getAll('produto_id[]');
+    const quantidades = data.getAll('quantidade[]');
+    const valores_unit = data.getAll('valor_unitario[]');
+    
+    // Calcular Total Geral
+    let valor_total_compra = 0;
+    const itensParaInserir = produto_ids.map((pid, index) => {
+        const totalItem = parseFloat(quantidades[index]) * parseFloat(valores_unit[index]);
+        valor_total_compra += totalItem;
+        return {
+            produto_id: pid,
+            quantidade: quantidades[index],
+            valor_unitario: valores_unit[index],
+            valor_total: totalItem
+        };
+    });
+
+    // --- TRANSAÇÃO ATÔMICA NO BANCO ---
+    await sql.begin(async sql => {
+        // A. Criar Compra
+        const [compra] = await sql`
+            INSERT INTO compras (fornecedor_id, data_compra, valor_total, forma_pagamento, qtd_parcelas)
+            VALUES (${fornecedor_id}, ${data_compra}, ${valor_total_compra}, ${forma_pagamento}, ${qtd_parcelas})
+            RETURNING id
+        `;
+
+        // B. Inserir Itens e Atualizar Estoque
+        for (const item of itensParaInserir) {
+            // Inserir Item
+            await sql`
+                INSERT INTO compra_itens (compra_id, produto_id, quantidade, valor_unitario, valor_total_item)
+                VALUES (${compra.id}, ${item.produto_id}, ${item.quantidade}, ${item.valor_unitario}, ${item.valor_total})
+            `;
+
+            // Atualizar Estoque Atual
+            await sql`
+                UPDATE produtos 
+                SET estoque_atual = estoque_atual + ${item.quantidade}
+                WHERE id = ${item.produto_id}
+            `;
+
+            // Registrar Movimentação (Kardex)
+            await sql`
+                INSERT INTO movimentacoes_estoque (produto_id, tipo, quantidade, origem_destino)
+                VALUES (${item.produto_id}, 'entrada', ${item.quantidade}, ${'Compra #' + compra.id})
+            `;
+        }
+
+        // C. Gerar Contas a Pagar (Parcelas)
+        const valorParcela = valor_total_compra / qtd_parcelas;
+        const dataBase = new Date(data_compra);
+
+        for (let i = 1; i <= qtd_parcelas; i++) {
+            // Adiciona 30 dias para cada parcela
+            const dataVencimento = new Date(dataBase);
+            dataVencimento.setDate(dataBase.getDate() + (30 * i));
+            
+            await sql`
+                INSERT INTO contas_pagar (compra_id, numero_parcela, valor_parcela, data_vencimento, status)
+                VALUES (${compra.id}, ${i + '/' + qtd_parcelas}, ${valorParcela}, ${dataVencimento}, 'pendente')
+            `;
+        }
+    });
+
+    message = 'Compra registrada com sucesso! Estoque atualizado.';
+  } catch (e) {
+    console.error(e);
+    error = 'Erro ao salvar compra: ' + e.message;
+  }
+}
+---
+
+<Layout title="Nova Compra">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold text-slate-800">Lançar Nova Compra</h1>
+        </div>
+
+        {message && <div class="bg-green-100 text-green-700 p-4 rounded mb-4">{message}</div>}
+        {error && <div class="bg-red-100 text-red-700 p-4 rounded mb-4">{error}</div>}
+
+        <form method="POST" class="bg-white p-6 rounded-lg shadow-lg border border-slate-200">
+            
+            <!-- Dados Gerais -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-slate-100">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Fornecedor</label>
+                    <select name="fornecedor_id" required class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Selecione...</option>
+                        {fornecedores.map(f => <option value={f.id}>{f.nome}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Data da Compra</label>
+                    <input type="date" name="data_compra" required class="w-full border-slate-300 rounded-md shadow-sm" />
+                </div>
+            </div>
+
+            <!-- Lista de Produtos -->
+            <div class="mb-6">
+                <h3 class="font-semibold text-slate-700 mb-2">Itens da Compra</h3>
+                <div id="items-container" class="space-y-3">
+                    <!-- Linha Padrão (será clonada pelo JS) -->
+                    <div class="item-row flex gap-3 items-end bg-slate-50 p-3 rounded border border-slate-200">
+                        <div class="flex-1">
+                            <label class="text-xs text-slate-500">Produto</label>
+                            <select name="produto_id[]" required class="w-full text-sm border-slate-300 rounded">
+                                <option value="">Produto...</option>
+                                {produtos.map(p => <option value={p.id}>{p.nome} ({p.unidade_medida})</option>)}
+                            </select>
+                        </div>
+                        <div class="w-24">
+                            <label class="text-xs text-slate-500">Qtd</label>
+                            <input type="number" step="0.01" name="quantidade[]" placeholder="0" required class="w-full text-sm border-slate-300 rounded" oninput="calculateTotal()" />
+                        </div>
+                        <div class="w-32">
+                            <label class="text-xs text-slate-500">Valor Unit (R$)</label>
+                            <input type="number" step="0.01" name="valor_unitario[]" placeholder="0.00" required class="w-full text-sm border-slate-300 rounded" oninput="calculateTotal()" />
+                        </div>
+                    </div>
+                </div>
+                
+                <button type="button" onclick="addItem()" class="mt-3 text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                    + Adicionar outro item
+                </button>
+            </div>
+
+            <!-- Pagamento -->
+            <div class="bg-blue-50 p-4 rounded-md border border-blue-100 mb-6">
+                <div class="flex items-center gap-4 mb-3">
+                    <label class="font-medium text-blue-900">Forma de Pagamento:</label>
+                    <div class="flex items-center gap-4">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="forma_pagamento" value="vista" checked onclick="toggleParcelas(false)" />
+                            <span>À Vista</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="forma_pagamento" value="parcelado" onclick="toggleParcelas(true)" />
+                            <span>Parcelado</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="parcelas-wrapper" class="hidden">
+                    <label class="text-sm text-blue-800">Número de Parcelas:</label>
+                    <input type="number" name="qtd_parcelas" min="2" max="24" value="2" class="w-20 ml-2 text-sm border-blue-300 rounded" />
+                </div>
+                
+                <div class="mt-4 pt-4 border-t border-blue-200 flex justify-between items-center">
+                    <span class="text-blue-900 font-bold text-lg">Total Estimado:</span>
+                    <span id="display-total" class="text-2xl font-bold text-blue-700">R$ 0,00</span>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3">
+                <a href="/" class="px-6 py-2 rounded border border-slate-300 text-slate-600 hover:bg-slate-50">Cancelar</a>
+                <button type="submit" class="px-6 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 font-bold shadow">
+                    Finalizar Compra
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script is:inline>
+        // Lógica simples de Frontend
+        function addItem() {
+            const container = document.getElementById('items-container');
+            const row = container.querySelector('.item-row').cloneNode(true);
+            // Limpa valores
+            row.querySelectorAll('input').forEach(i => i.value = '');
+            container.appendChild(row);
+        }
+
+        function toggleParcelas(show) {
+            const wrapper = document.getElementById('parcelas-wrapper');
+            if(show) wrapper.classList.remove('hidden');
+            else wrapper.classList.add('hidden');
+        }
+
+        function calculateTotal() {
+            let total = 0;
+            const qtds = document.getElementsByName('quantidade[]');
+            const vals = document.getElementsByName('valor_unitario[]');
+            
+            for(let i=0; i < qtds.length; i++) {
+                const q = parseFloat(qtds[i].value) || 0;
+                const v = parseFloat(vals[i].value) || 0;
+                total += (q * v);
+            }
+            
+            document.getElementById('display-total').innerText = total.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'});
+        }
+    </script>
+</Layout>
