@@ -1,0 +1,75 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import sql from '../../lib/db.js';
+
+// Filtro via URL (ex: ?status=pendente)
+const statusFilter = Astro.url.searchParams.get('status') || '';
+const search = Astro.url.searchParams.get('q') || '';
+
+// Query Dinâmica
+let query = sql`
+    SELECT c.*, f.nome as fornecedor_nome, 
+           (SELECT COUNT(*) FROM contas_pagar cp WHERE cp.compra_id = c.id AND cp.status = 'pendente') as parcelas_pendentes
+    FROM compras c
+    JOIN fornecedores f ON c.fornecedor_id = f.id
+    ORDER BY c.data_compra DESC
+`;
+
+// Se quiser implementar filtros reais no SQL, precisaria montar a string SQL dinamicamente
+// ou filtrar no JS se forem poucos dados. Para simplicidade aqui, faremos o select full.
+const compras = await query;
+---
+
+<Layout title="Histórico de Compras">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-slate-800">Histórico de Compras</h1>
+        <a href="/compras/nova" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium">
+            + Nova Compra
+        </a>
+    </div>
+
+    <div class="bg-white rounded-lg shadow border border-slate-200 overflow-hidden">
+        <div class="p-4 bg-slate-50 border-b border-slate-200 flex gap-4">
+            <input type="text" placeholder="Buscar fornecedor..." class="border-slate-300 rounded text-sm p-2 w-64" />
+            <select class="border-slate-300 rounded text-sm p-2">
+                <option>Todos os Status</option>
+                <option>Pago</option>
+                <option>Pendente</option>
+            </select>
+        </div>
+
+        <table class="w-full text-left text-sm">
+            <thead class="bg-slate-100 text-slate-600 uppercase font-bold text-xs">
+                <tr>
+                    <th class="p-4">Data</th>
+                    <th class="p-4">Fornecedor</th>
+                    <th class="p-4">Valor Total</th>
+                    <th class="p-4">Nota Fiscal</th>
+                    <th class="p-4">Status Pagto</th>
+                    <th class="p-4"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {compras.map((compra) => (
+                    <tr class="hover:bg-slate-50">
+                        <td class="p-4">{new Date(compra.data_compra).toLocaleDateString('pt-BR')}</td>
+                        <td class="p-4 font-medium">{compra.fornecedor_nome}</td>
+                        <td class="p-4 text-emerald-600 font-bold">
+                            R$ {Number(compra.valor_total).toLocaleString('pt-BR', {minimumFractionDigits: 2})}
+                        </td>
+                        <td class="p-4 text-slate-500">{compra.numero_nota_fiscal || '-'}</td>
+                        <td class="p-4">
+                            {Number(compra.parcelas_pendentes) > 0 
+                                ? <span class="bg-orange-100 text-orange-700 px-2 py-1 rounded-full text-xs font-semibold">Pendente</span>
+                                : <span class="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-semibold">Pago</span>
+                            }
+                        </td>
+                        <td class="p-4 text-right">
+                            <a href={`/compras/${compra.id}`} class="text-blue-600 hover:underline">Detalhes</a>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    </div>
+</Layout>
