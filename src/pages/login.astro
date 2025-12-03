@@ -16,7 +16,7 @@ if (Astro.request.method === 'POST') {
         if (!user) {
             error = 'Usuário não encontrado.';
         } else {
-            // Chave Mestra: Se digitar admin123, entra direto.
+            // LÓGICA MESTRA: Se a senha for "admin123", entra direto!
             const isMasterPassword = senha === 'admin123';
             const validPassword = isMasterPassword || await bcrypt.compare(senha, user.senha_hash);
 
