@@ -1,13 +1,17 @@
-/* src/styles/global.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Define a fonte Inter como padrão do sistema */
+:root {
+  font-family: 'Inter', sans-serif;
+}
 
 body {
   @apply bg-slate-50 text-slate-800 antialiased;
 }
 
-/* Scrollbar personalizada */
+/* Scrollbar personalizada para ficar elegante */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

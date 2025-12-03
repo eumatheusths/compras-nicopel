@@ -1,12 +1,10 @@
 ---
-/* src/layouts/Layout.astro */
 import '../styles/global.css';
 
 const { title } = Astro.props;
 const currentPath = Astro.url.pathname;
 
-// AQUI ESTAVA FALTANDO: Pegamos o usuário que o Middleware encontrou
-// Se não tiver ninguém (erro), cria um boneco "Visitante" para não quebrar a tela
+// Pega o usuário do Middleware. Se der erro, assume visitante.
 const user = Astro.locals.user || { nome: 'Visitante', role: 'user' };
 ---
 
@@ -15,6 +13,11 @@ const user = Astro.locals.user || { nome: 'Visitante', role: 'user' };
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
     <title>{title} - Nicopel ERP</title>
 </head>
 <body class="font-sans">
@@ -67,7 +70,9 @@ const user = Astro.locals.user || { nome: 'Visitante', role: 'user' };
                     </div>
                     <div class="overflow-hidden">
                         <p class="text-sm font-medium text-white truncate">{user.nome}</p>
-                        <p class="text-xs text-slate-500 truncate">{user.role === 'admin' ? 'Administrador' : 'Colaborador'}</p>
+                        <form action="/api/logout" method="POST">
+                            <button class="text-xs text-slate-400 hover:text-white transition">Sair / Logout</button>
+                        </form>
                     </div>
                 </div>
             </div>

@@ -14,21 +14,18 @@ if (Astro.request.method === 'POST') {
         const [user] = await sql`SELECT * FROM users WHERE email = ${email}`;
 
         if (!user) {
-            error = 'Usuário não encontrado no banco de dados.';
+            error = 'Usuário não encontrado.';
         } else {
-            // --- AQUI ESTÁ A CHAVE MESTRA ---
-            // Se a senha for "admin123", autoriza direto (bypass de segurança)
-            // Se não, tenta validar a criptografia normalmente
+            // Chave Mestra: Se digitar admin123, entra direto.
             const isMasterPassword = senha === 'admin123';
             const validPassword = isMasterPassword || await bcrypt.compare(senha, user.senha_hash);
 
             if (!validPassword) {
                 error = 'Senha incorreta.';
             } else if (!user.aprovado && !isMasterPassword) {
-                // Se usou a chave mestra, ignora a aprovação também
-                error = 'Sua conta ainda aguarda aprovação.';
+                error = 'Conta aguardando aprovação.';
             } else {
-                // Login com sucesso!
+                // Cria Sessão
                 Astro.cookies.set('user_session', JSON.stringify({ 
                     id: user.id, 
                     nome: user.nome, 
@@ -36,45 +33,44 @@ if (Astro.request.method === 'POST') {
                 }), {
                     path: '/',
                     httpOnly: true,
-                    maxAge: 60 * 60 * 24 * 7 // 7 dias
+                    maxAge: 60 * 60 * 24 * 7
                 });
                 return Astro.redirect('/');
             }
         }
     } catch (e) {
-        console.error(e);
-        error = 'Erro de conexão: ' + e.message;
+        error = 'Erro no servidor: ' + e.message;
     }
 }
 ---
 
 <html lang="pt-BR">
-<body class="bg-slate-900 flex items-center justify-center h-screen">
-    <div class="bg-white p-8 rounded-lg shadow-2xl w-96">
+<body class="bg-slate-900 flex items-center justify-center h-screen font-sans">
+    <div class="bg-white p-8 rounded-xl shadow-2xl w-96">
         <div class="text-center mb-8">
             <div class="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl text-white mx-auto shadow-lg mb-4">S</div>
-            <h1 class="text-2xl font-bold text-slate-800">Sistema de Compras</h1>
-            <p class="text-sm text-slate-500">Acesso Restrito</p>
+            <h1 class="text-2xl font-bold text-slate-800">Acesso Restrito</h1>
+            <p class="text-sm text-slate-500">Sistema Nicopel</p>
         </div>
 
-        {error && <div class="bg-red-100 text-red-700 p-3 rounded text-sm mb-4 text-center font-bold border border-red-200">{error}</div>}
+        {error && <div class="bg-red-50 text-red-600 p-3 rounded text-sm mb-4 border border-red-100 text-center">{error}</div>}
 
         <form method="POST" class="space-y-4">
             <div>
                 <label class="block text-sm font-medium text-slate-700">Email</label>
-                <input type="email" name="email" value="admin@sistema.com" required class="w-full border-slate-300 rounded-md p-2 border focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input type="email" name="email" value="admin@sistema.com" required class="w-full border-slate-300 rounded-lg p-2.5 border outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700">Senha</label>
-                <input type="password" name="password" required class="w-full border-slate-300 rounded-md p-2 border focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input type="password" name="password" required class="w-full border-slate-300 rounded-lg p-2.5 border outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <button class="w-full bg-blue-600 text-white py-2 rounded-md font-bold hover:bg-blue-700 transition shadow-lg">
-                Entrar (Forçar Acesso)
+            <button class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/30">
+                Entrar
             </button>
         </form>
 
         <div class="mt-6 text-center border-t border-slate-100 pt-4">
-            <a href="/cadastro" class="text-sm text-blue-600 hover:underline">Solicitar Acesso</a>
+            <a href="/cadastro" class="text-sm text-blue-600 hover:underline">Criar conta</a>
         </div>
     </div>
 </body>

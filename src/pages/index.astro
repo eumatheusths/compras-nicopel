@@ -1,6 +1,5 @@
 ---
-// src/pages/index.astro (DASHBOARD)
-import Layout from '../layouts/Layout.astro'; // Note que aqui é apenas ../
+import Layout from '../layouts/Layout.astro';
 import sql from '../lib/db.js';
 
 // Buscas no Banco de Dados
@@ -68,7 +67,6 @@ const proximasContas = await sql`
                         <th class="px-6 py-4">Valor</th>
                         <th class="px-6 py-4">Vencimento</th>
                         <th class="px-6 py-4">Status</th>
-                        <th class="px-6 py-4 text-right">Ação</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
@@ -92,15 +90,10 @@ const proximasContas = await sql`
                                     A Vencer
                                 </span>
                             </td>
-                            <td class="px-6 py-4 text-right">
-                                <button class="text-slate-400 hover:text-blue-600 transition">
-                                    ...
-                                </button>
-                            </td>
                         </tr>
                     ))}
                     {proximasContas.length === 0 && (
-                        <tr><td colspan="6" class="px-6 py-8 text-center text-slate-400">Nenhuma conta pendente.</td></tr>
+                        <tr><td colspan="5" class="px-6 py-8 text-center text-slate-400">Nenhuma conta pendente.</td></tr>
                     )}
                 </tbody>
             </table>
