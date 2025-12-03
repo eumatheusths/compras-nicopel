@@ -1,0 +1,111 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import sql from '../../lib/db.js';
+
+// 1. Segurança: Só admin entra aqui
+const user = Astro.locals.user;
+if (!user || user.role !== 'admin') {
+    return Astro.redirect('/');
+}
+
+let message = '';
+
+// 2. Processar Ações (Aprovar ou Excluir)
+if (Astro.request.method === 'POST') {
+    const formData = await Astro.request.formData();
+    const action = formData.get('action');
+    const targetId = formData.get('user_id');
+
+    if (action === 'aprovar') {
+        await sql`UPDATE users SET aprovado = TRUE WHERE id = ${targetId}`;
+        message = 'Usuário aprovado com sucesso!';
+    } else if (action === 'reprovar') {
+        await sql`DELETE FROM users WHERE id = ${targetId}`; // Ou apenas deixar inativo
+        message = 'Usuário removido.';
+    }
+}
+
+// 3. Buscar Listas
+const pendentes = await sql`SELECT * FROM users WHERE aprovado = FALSE ORDER BY created_at DESC`;
+const aprovados = await sql`SELECT * FROM users WHERE aprovado = TRUE ORDER BY nome ASC`;
+---
+
+<Layout title="Gestão de Usuários">
+    <h1 class="text-2xl font-bold text-slate-800 mb-6">Controle de Acesso</h1>
+
+    {message && <div class="bg-green-100 text-green-700 p-4 rounded mb-6 border border-green-200">{message}</div>}
+
+    {pendentes.length > 0 && (
+        <div class="mb-10">
+            <h2 class="text-lg font-bold text-orange-600 mb-4 flex items-center gap-2">
+                ⚠️ Aguardando Aprovação ({pendentes.length})
+            </h2>
+            <div class="bg-white rounded-lg shadow border border-orange-200 overflow-hidden">
+                <table class="w-full text-left">
+                    <thead class="bg-orange-50 text-orange-800 uppercase text-xs">
+                        <tr>
+                            <th class="p-4">Nome</th>
+                            <th class="p-4">Email</th>
+                            <th class="p-4">Data Pedido</th>
+                            <th class="p-4 text-right">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-orange-100">
+                        {pendentes.map(u => (
+                            <tr>
+                                <td class="p-4 font-bold">{u.nome}</td>
+                                <td class="p-4 text-slate-600">{u.email}</td>
+                                <td class="p-4 text-sm text-slate-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                                <td class="p-4 text-right flex justify-end gap-2">
+                                    <form method="POST">
+                                        <input type="hidden" name="user_id" value={u.id} />
+                                        <button name="action" value="aprovar" class="bg-green-600 text-white px-4 py-1 rounded text-sm font-bold hover:bg-green-700">
+                                            ✅ Aprovar
+                                        </button>
+                                        <button name="action" value="reprovar" class="bg-red-100 text-red-600 px-3 py-1 rounded text-sm hover:bg-red-200 border border-red-200">
+                                            Recusar
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    )}
+
+    <div class="bg-white rounded-lg shadow border border-slate-200">
+        <div class="p-4 border-b border-slate-100 bg-slate-50">
+            <h3 class="font-bold text-slate-700">Usuários Ativos</h3>
+        </div>
+        <table class="w-full text-left text-sm">
+            <thead class="bg-slate-100 text-slate-500 uppercase text-xs">
+                <tr>
+                    <th class="p-4">ID</th>
+                    <th class="p-4">Nome</th>
+                    <th class="p-4">Email</th>
+                    <th class="p-4">Função</th>
+                    <th class="p-4">Status</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {aprovados.map(u => (
+                    <tr class="hover:bg-slate-50">
+                        <td class="p-4 text-slate-400">#{u.id}</td>
+                        <td class="p-4 font-medium">{u.nome}</td>
+                        <td class="p-4 text-slate-500">{u.email}</td>
+                        <td class="p-4">
+                            <span class={`px-2 py-1 rounded text-xs font-bold ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-700'}`}>
+                                {u.role.toUpperCase()}
+                            </span>
+                        </td>
+                        <td class="p-4">
+                            <span class="text-green-600 font-bold text-xs">● Ativo</span>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    </div>
+</Layout>
