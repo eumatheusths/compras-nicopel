@@ -2,11 +2,10 @@
 import Layout from '../../layouts/Layout.astro';
 import sql from '../../lib/db.js';
 
-// 1. Buscar dados para os Selects
+// Busca dados para os selects
 const fornecedores = await sql`SELECT id, nome FROM fornecedores ORDER BY nome`;
 const produtos = await sql`SELECT id, nome, unidade_medida FROM produtos ORDER BY nome`;
 
-// 2. Processamento do Formulário (POST)
 let message = '';
 let error = '';
 
@@ -14,18 +13,19 @@ if (Astro.request.method === 'POST') {
   try {
     const data = await Astro.request.formData();
     
-    // Extrair dados básicos
+    // Dados do Cabeçalho
     const fornecedor_id = data.get('fornecedor_id');
     const data_compra = data.get('data_compra');
-    const forma_pagamento = data.get('forma_pagamento'); // vista ou parcelado
+    const forma_pagamento = data.get('forma_pagamento'); 
     const qtd_parcelas = parseInt(data.get('qtd_parcelas') || '1');
+    const nota_fiscal = data.get('nota_fiscal');
     
-    // Extrair Arrays de Produtos (Logica manual pois FormData trata arrays diferente)
+    // Arrays de Itens (Tratamento manual)
     const produto_ids = data.getAll('produto_id[]');
     const quantidades = data.getAll('quantidade[]');
     const valores_unit = data.getAll('valor_unitario[]');
     
-    // Calcular Total Geral
+    // Calcula Total Geral
     let valor_total_compra = 0;
     const itensParaInserir = produto_ids.map((pid, index) => {
         const totalItem = parseFloat(quantidades[index]) * parseFloat(valores_unit[index]);
@@ -38,45 +38,41 @@ if (Astro.request.method === 'POST') {
         };
     });
 
-    // --- TRANSAÇÃO ATÔMICA NO BANCO ---
+    // --- TRANSAÇÃO NO BANCO ---
     await sql.begin(async sql => {
-        // A. Criar Compra
+        // 1. Criar Compra
         const [compra] = await sql`
-            INSERT INTO compras (fornecedor_id, data_compra, valor_total, forma_pagamento, qtd_parcelas)
-            VALUES (${fornecedor_id}, ${data_compra}, ${valor_total_compra}, ${forma_pagamento}, ${qtd_parcelas})
+            INSERT INTO compras (fornecedor_id, data_compra, valor_total, forma_pagamento, qtd_parcelas, numero_nota_fiscal)
+            VALUES (${fornecedor_id}, ${data_compra}, ${valor_total_compra}, ${forma_pagamento}, ${qtd_parcelas}, ${nota_fiscal})
             RETURNING id
         `;
 
-        // B. Inserir Itens e Atualizar Estoque
+        // 2. Inserir Itens e Atualizar Estoque
         for (const item of itensParaInserir) {
-            // Inserir Item
             await sql`
                 INSERT INTO compra_itens (compra_id, produto_id, quantidade, valor_unitario, valor_total_item)
                 VALUES (${compra.id}, ${item.produto_id}, ${item.quantidade}, ${item.valor_unitario}, ${item.valor_total})
             `;
 
-            // Atualizar Estoque Atual
+            // Aumenta Estoque
             await sql`
-                UPDATE produtos 
-                SET estoque_atual = estoque_atual + ${item.quantidade}
-                WHERE id = ${item.produto_id}
+                UPDATE produtos SET estoque_atual = estoque_atual + ${item.quantidade} WHERE id = ${item.produto_id}
             `;
 
-            // Registrar Movimentação (Kardex)
+            // Log de Movimentação
             await sql`
-                INSERT INTO movimentacoes_estoque (produto_id, tipo, quantidade, origem_destino)
-                VALUES (${item.produto_id}, 'entrada', ${item.quantidade}, ${'Compra #' + compra.id})
+                INSERT INTO movimentacoes_estoque (produto_id, tipo, quantidade, origem_destino, data_movimentacao)
+                VALUES (${item.produto_id}, 'entrada', ${item.quantidade}, ${'Compra #' + compra.id}, ${data_compra})
             `;
         }
 
-        // C. Gerar Contas a Pagar (Parcelas)
+        // 3. Gerar Financeiro (Parcelas)
         const valorParcela = valor_total_compra / qtd_parcelas;
         const dataBase = new Date(data_compra);
 
         for (let i = 1; i <= qtd_parcelas; i++) {
-            // Adiciona 30 dias para cada parcela
             const dataVencimento = new Date(dataBase);
-            dataVencimento.setDate(dataBase.getDate() + (30 * i));
+            dataVencimento.setDate(dataBase.getDate() + (30 * i)); // +30 dias por parcela
             
             await sql`
                 INSERT INTO contas_pagar (compra_id, numero_parcela, valor_parcela, data_vencimento, status)
@@ -85,99 +81,111 @@ if (Astro.request.method === 'POST') {
         }
     });
 
-    message = 'Compra registrada com sucesso! Estoque atualizado.';
+    return Astro.redirect('/compras'); // Sucesso: volta para a lista
   } catch (e) {
     console.error(e);
-    error = 'Erro ao salvar compra: ' + e.message;
+    error = 'Erro ao salvar: ' + e.message;
   }
 }
 ---
 
 <Layout title="Nova Compra">
-    <div class="max-w-4xl mx-auto">
-        <div class="flex justify-between items-center mb-6">
-            <h1 class="text-2xl font-bold text-slate-800">Lançar Nova Compra</h1>
+    <div class="max-w-5xl mx-auto">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-2xl font-bold text-slate-800">Registrar Entrada (Compra)</h1>
+            <a href="/compras" class="text-slate-500 hover:text-slate-800 text-sm font-medium">Voltar</a>
         </div>
 
-        {message && <div class="bg-green-100 text-green-700 p-4 rounded mb-4">{message}</div>}
-        {error && <div class="bg-red-100 text-red-700 p-4 rounded mb-4">{error}</div>}
+        {error && <div class="bg-red-100 text-red-700 p-4 rounded mb-6 border border-red-200">{error}</div>}
 
-        <form method="POST" class="bg-white p-6 rounded-lg shadow-lg border border-slate-200">
+        <form method="POST" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
             
-            <!-- Dados Gerais -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-slate-100">
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Fornecedor</label>
-                    <select name="fornecedor_id" required class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500">
+            <div class="p-6 bg-slate-50 border-b border-slate-200 grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Fornecedor</label>
+                    <select name="fornecedor_id" required class="w-full border-slate-300 rounded-lg p-2.5 text-sm focus:ring-blue-500 focus:border-blue-500">
                         <option value="">Selecione...</option>
                         {fornecedores.map(f => <option value={f.id}>{f.nome}</option>)}
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Data da Compra</label>
-                    <input type="date" name="data_compra" required class="w-full border-slate-300 rounded-md shadow-sm" />
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Data Emissão</label>
+                    <input type="date" name="data_compra" required class="w-full border-slate-300 rounded-lg p-2.5 text-sm" />
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Nº Nota Fiscal</label>
+                    <input type="text" name="nota_fiscal" placeholder="000.000" class="w-full border-slate-300 rounded-lg p-2.5 text-sm" />
                 </div>
             </div>
 
-            <!-- Lista de Produtos -->
-            <div class="mb-6">
-                <h3 class="font-semibold text-slate-700 mb-2">Itens da Compra</h3>
+            <div class="p-6">
+                <h3 class="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                    Itens da Nota
+                </h3>
+                
                 <div id="items-container" class="space-y-3">
-                    <!-- Linha Padrão (será clonada pelo JS) -->
-                    <div class="item-row flex gap-3 items-end bg-slate-50 p-3 rounded border border-slate-200">
-                        <div class="flex-1">
-                            <label class="text-xs text-slate-500">Produto</label>
-                            <select name="produto_id[]" required class="w-full text-sm border-slate-300 rounded">
-                                <option value="">Produto...</option>
+                    <div class="item-row grid grid-cols-12 gap-3 items-end p-3 bg-slate-50 rounded-lg border border-slate-100">
+                        <div class="col-span-6">
+                            <label class="text-[10px] text-slate-400 uppercase font-bold">Produto</label>
+                            <select name="produto_id[]" required class="w-full border-slate-300 rounded text-sm p-2">
+                                <option value="">Selecione...</option>
                                 {produtos.map(p => <option value={p.id}>{p.nome} ({p.unidade_medida})</option>)}
                             </select>
                         </div>
-                        <div class="w-24">
-                            <label class="text-xs text-slate-500">Qtd</label>
-                            <input type="number" step="0.01" name="quantidade[]" placeholder="0" required class="w-full text-sm border-slate-300 rounded" oninput="calculateTotal()" />
+                        <div class="col-span-2">
+                            <label class="text-[10px] text-slate-400 uppercase font-bold">Qtd</label>
+                            <input type="number" step="0.01" name="quantidade[]" placeholder="0" required class="w-full border-slate-300 rounded text-sm p-2" oninput="calculateTotal()" />
                         </div>
-                        <div class="w-32">
-                            <label class="text-xs text-slate-500">Valor Unit (R$)</label>
-                            <input type="number" step="0.01" name="valor_unitario[]" placeholder="0.00" required class="w-full text-sm border-slate-300 rounded" oninput="calculateTotal()" />
+                        <div class="col-span-3">
+                            <label class="text-[10px] text-slate-400 uppercase font-bold">Valor Unit (R$)</label>
+                            <input type="number" step="0.01" name="valor_unitario[]" placeholder="0.00" required class="w-full border-slate-300 rounded text-sm p-2" oninput="calculateTotal()" />
+                        </div>
+                        <div class="col-span-1 flex justify-center pb-2">
+                            <button type="button" onclick="this.closest('.item-row').remove(); calculateTotal()" class="text-red-400 hover:text-red-600">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
                 
-                <button type="button" onclick="addItem()" class="mt-3 text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                <button type="button" onclick="addItem()" class="mt-4 text-sm text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1">
                     + Adicionar outro item
                 </button>
             </div>
 
-            <!-- Pagamento -->
-            <div class="bg-blue-50 p-4 rounded-md border border-blue-100 mb-6">
-                <div class="flex items-center gap-4 mb-3">
-                    <label class="font-medium text-blue-900">Forma de Pagamento:</label>
-                    <div class="flex items-center gap-4">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="radio" name="forma_pagamento" value="vista" checked onclick="toggleParcelas(false)" />
-                            <span>À Vista</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="radio" name="forma_pagamento" value="parcelado" onclick="toggleParcelas(true)" />
-                            <span>Parcelado</span>
-                        </label>
+            <div class="p-6 bg-blue-50 border-t border-blue-100">
+                <div class="flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div class="flex items-center gap-6">
+                        <div>
+                            <label class="block text-xs font-bold text-blue-800 uppercase mb-1">Pagamento</label>
+                            <div class="flex items-center gap-4 bg-white p-2 rounded border border-blue-200">
+                                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                                    <input type="radio" name="forma_pagamento" value="vista" checked onclick="toggleParcelas(false)" />
+                                    À Vista
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                                    <input type="radio" name="forma_pagamento" value="parcelado" onclick="toggleParcelas(true)" />
+                                    Parcelado
+                                </label>
+                            </div>
+                        </div>
+                        <div id="parcelas-wrapper" class="hidden">
+                            <label class="block text-xs font-bold text-blue-800 uppercase mb-1">Nº Parcelas</label>
+                            <input type="number" name="qtd_parcelas" min="2" max="24" value="2" class="w-20 border-blue-300 rounded text-sm p-2" />
+                        </div>
                     </div>
-                </div>
 
-                <div id="parcelas-wrapper" class="hidden">
-                    <label class="text-sm text-blue-800">Número de Parcelas:</label>
-                    <input type="number" name="qtd_parcelas" min="2" max="24" value="2" class="w-20 ml-2 text-sm border-blue-300 rounded" />
-                </div>
-                
-                <div class="mt-4 pt-4 border-t border-blue-200 flex justify-between items-center">
-                    <span class="text-blue-900 font-bold text-lg">Total Estimado:</span>
-                    <span id="display-total" class="text-2xl font-bold text-blue-700">R$ 0,00</span>
+                    <div class="text-right">
+                        <span class="block text-xs text-blue-600 font-bold uppercase">Total Estimado</span>
+                        <span id="display-total" class="text-3xl font-bold text-blue-900">R$ 0,00</span>
+                    </div>
                 </div>
             </div>
 
-            <div class="flex justify-end gap-3">
-                <a href="/" class="px-6 py-2 rounded border border-slate-300 text-slate-600 hover:bg-slate-50">Cancelar</a>
-                <button type="submit" class="px-6 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 font-bold shadow">
+            <div class="p-4 bg-slate-100 border-t border-slate-200 flex justify-end gap-3">
+                <a href="/compras" class="px-6 py-2 rounded-lg text-slate-600 hover:bg-slate-200 font-medium text-sm transition">Cancelar</a>
+                <button type="submit" class="px-6 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg shadow-blue-600/20 text-sm transition">
                     Finalizar Compra
                 </button>
             </div>
@@ -185,13 +193,14 @@ if (Astro.request.method === 'POST') {
     </div>
 
     <script is:inline>
-        // Lógica simples de Frontend
         function addItem() {
             const container = document.getElementById('items-container');
-            const row = container.querySelector('.item-row').cloneNode(true);
-            // Limpa valores
-            row.querySelectorAll('input').forEach(i => i.value = '');
-            container.appendChild(row);
+            const row = container.querySelector('.item-row');
+            if(row) {
+                const newRow = row.cloneNode(true);
+                newRow.querySelectorAll('input').forEach(i => i.value = '');
+                container.appendChild(newRow);
+            }
         }
 
         function toggleParcelas(show) {
