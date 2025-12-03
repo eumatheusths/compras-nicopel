@@ -1,0 +1,48 @@
+---
+import sql from '../lib/db.js';
+import bcrypt from 'bcryptjs';
+
+let message = 'Processando...';
+
+try {
+    // 1. Define a nova senha
+    const novaSenha = 'admin123';
+    
+    // 2. Gera a criptografia correta usando a biblioteca do seu projeto
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(novaSenha, salt);
+
+    // 3. Atualiza o usuário no banco (ou cria se não existir)
+    // O comando abaixo tenta atualizar, se não achar o email, ele cria.
+    const update = await sql`
+        UPDATE users 
+        SET senha_hash = ${hash}, aprovado = TRUE, role = 'admin'
+        WHERE email = 'admin@sistema.com'
+        RETURNING id
+    `;
+
+    if (update.length === 0) {
+        await sql`
+            INSERT INTO users (nome, email, senha_hash, role, aprovado)
+            VALUES ('Admin Master', 'admin@sistema.com', ${hash}, 'admin', TRUE)
+        `;
+    }
+
+    message = `SUCESSO! A senha do admin@sistema.com foi redefinida para: ${novaSenha}`;
+
+} catch (error) {
+    message = `ERRO: ${error.message}`;
+    console.error(error);
+}
+---
+
+<div style="display:flex; justify-content:center; align-items:center; height:100vh; background:#f0f9ff; font-family:sans-serif;">
+    <div style="background:white; padding:40px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); text-align:center;">
+        <h1 style="color: #059669; margin-bottom: 20px;">{message}</h1>
+        <p>Agora você pode apagar este arquivo e fazer login.</p>
+        <br/>
+        <a href="/login" style="background:#2563eb; color:white; padding:12px 24px; text-decoration:none; border-radius:6px; font-weight:bold;">
+            Ir para Login
+        </a>
+    </div>
+</div>
